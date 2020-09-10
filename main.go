@@ -54,14 +54,13 @@ func main() {
 				return err
 			}
 
-			verbose := c.Bool("verbose")
 			startIndex := 1
 
 			if c.Bool("dryRun") {
-				return cutDryRun(parsedTimes, base, postfix, ext, startIndex, verbose)
+				return cutDryRun(parsedTimes, base, postfix, ext, startIndex)
 			}
 
-			return cutSchedule(parsedTimes, base, postfix, ext, startIndex, verbose)
+			return cutSchedule(parsedTimes, base, postfix, ext, startIndex, c.Bool("verbose"))
 		},
 	}
 
@@ -361,11 +360,11 @@ func numSplit(in string) (string, int32, error) {
 	return integer, int32(pf), nil
 }
 
-func cutDryRun(timePairs []decTimePair, base, postfix, ext string, startIndex int, verbose bool) error {
+func cutDryRun(timePairs []decTimePair, base, postfix, ext string, startIndex int) error {
 	in := base + ext
 
 	for i, tp := range timePairs {
-		command := constructCommand(tp, in, base, postfix, ext, i+startIndex, verbose)
+		command := constructCommand(tp, in, base, postfix, ext, i+startIndex, true)
 
 		fmt.Println(command)
 	}
