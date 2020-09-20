@@ -2,15 +2,16 @@ package main
 
 import (
 	"fmt"
-	"github.com/bitfield/script"
-	"github.com/shopspring/decimal"
-	"github.com/urfave/cli/v2"
 	"log"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/bitfield/script"
+	"github.com/shopspring/decimal"
+	"github.com/urfave/cli/v2"
 )
 
 var timeArgRegex = regexp.MustCompile(`^[\d,.\-]+$`)
@@ -38,6 +39,24 @@ func main() {
 				Value:   false,
 				Usage:   "print commands before executing them",
 			},
+			&cli.Float64Flag{
+				Name:    "after-context",
+				Aliases: []string{"a"},
+				Value:   0.0,
+				Usage:   "number of seconds to start cutting before the provided start point(s)",
+			},
+			&cli.Float64Flag{
+				Name:    "before-context",
+				Aliases: []string{"b"},
+				Value:   0.0,
+				Usage:   "number of seconds to end cutting after the provided end point(s)",
+			},
+			&cli.Float64Flag{
+				Name:    "context",
+				Aliases: []string{"c"},
+				Value:   0.0,
+				Usage:   "number of seconds to cut around the provided start and end point(s)",
+			},
 		},
 		Action: func(c *cli.Context) error {
 			args := c.Args().Slice()
@@ -54,13 +73,18 @@ func main() {
 				return err
 			}
 
+			adjustedTimes, err := adjustTimes(parsedTimes, c.Float64("before-context"), c.Float64("after-context"), c.Float64("context"))
+			if err != nil {
+				return err
+			}
+
 			startIndex := 1
 
 			if c.Bool("dryRun") {
-				return cutDryRun(parsedTimes, base, postfix, ext, startIndex)
+				return cutDryRun(adjustedTimes, base, postfix, ext, startIndex)
 			}
 
-			return cutSchedule(parsedTimes, base, postfix, ext, startIndex, c.Bool("verbose"))
+			return cutSchedule(adjustedTimes, base, postfix, ext, startIndex, c.Bool("verbose"))
 		},
 	}
 
@@ -314,10 +338,10 @@ func asClock(in string) (decTime, error) {
 		s = integer[i*2 : i*2+2]
 		pi, err = strconv.ParseInt(s, 10, 32)
 		if err != nil {
-			return decTime{}, fmt.Errorf("invalid string to be parsed as int: %s, at i=%dm in %s, err = %w", s, i, integer, err)
+			return decTime{}, fmt.Errorf("invalid string to be parsed as int: %s, at i=%d in %s, err = %w", s, i, integer, err)
 		}
 		if pi >= 60 {
-			return decTime{}, fmt.Errorf("invalid string to be parsed as int: %s, at i=%dm in %s, err = %d >= 60", s, i, pi)
+			return decTime{}, fmt.Errorf("pi is at least 60: %d", pi)
 		}
 		value += multiplier * int(pi)
 		multiplier *= 60
@@ -358,6 +382,38 @@ func numSplit(in string) (string, int32, error) {
 	}
 
 	return integer, int32(pf), nil
+}
+
+const alpha = 0.0001
+
+func adjustTimes(in []decTimePair, b, a, c float64) ([]decTimePair, error) {
+	if len(in) == 0 || a < alpha && b < alpha && c < alpha {
+		return in, nil
+	}
+
+	if a < alpha {
+		a = c
+	}
+	if b < alpha {
+		b = c
+	}
+	if a < 0.0 || b < 0.0 {
+		return nil, fmt.Errorf("context must not be negative. a = %f, b = %f", a, b)
+	}
+
+	var out []decTimePair
+
+	for _, tp := range in {
+		s := tp[0].Add(decimal.NewFromFloat(-1 * b))
+		e := tp[1].Add(decimal.NewFromFloat(a))
+		if s.Cmp(decimal.Zero) < 0 {
+			s = decimal.Zero
+		}
+
+		out = append(out, decTimePair{decTime{s}, decTime{e}})
+	}
+
+	return out, nil
 }
 
 func cutDryRun(timePairs []decTimePair, base, postfix, ext string, startIndex int) error {
