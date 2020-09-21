@@ -77,6 +77,17 @@ This will result in ten new files:
 - `myvid-9cut.mpg` that runs for roughly 35 seconds from roughly 4:28 of the original video.
 - `myvid-10cut.mpg` that runs for roughly 35 seconds from roughly 4:58 of the original video.
 
+### Fix a given generated file
+
+Fix `myvid-3cut.mpg` generated in the previous example to start earlier and end later
+
+```
+ffc -s -c 5 -o 3 myvid.mpg -30-60-90-120-150-180-210-240-270- cut
+```
+
+This will result in one new file:
+- `myvid-3cut.mpg` that runs for roughly 40 seconds from roughly 1:25 of the original video.
+
 ## Additional tools
 
 - [ffr](https://github.com/peteraba/ffr) is a toolbox which helps with cleaning up after extensive ffr usage. `ffr` is able to re-encode videos, merge generated names, prepend and append to filenames. `ffr` is designed to work with multiple files at once.
