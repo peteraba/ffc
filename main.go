@@ -57,11 +57,11 @@ func main() {
 				Value:   0.0,
 				Usage:   "number of seconds to cut around the provided start and end point(s)",
 			},
-			&cli.IntFlag{
-				Name:    "only",
-				Aliases: []string{"o"},
-				Value:   0.0,
-				Usage:   "only can be used to a specific (numbered) generated file [e.g. --fix=2 -> only -2ffc is generated]",
+			&cli.StringFlag{
+				Name:    "pick",
+				Aliases: []string{"p"},
+				Value:   "",
+				Usage:   "comma separated list of part numbers to keep from args",
 			},
 		},
 		Action: func(c *cli.Context) error {
@@ -85,13 +85,16 @@ func main() {
 			}
 
 			startIndex := 1
-			only := c.Int("only")
-
-			if c.Bool("dryRun") {
-				return cutDryRun(adjustedTimes, base, postfix, ext, startIndex, only)
+			picks, err := getPicks(c.String("pick"))
+			if err != nil {
+				return err
 			}
 
-			return cutSchedule(adjustedTimes, base, postfix, ext, startIndex, only, c.Bool("verbose"))
+			if c.Bool("dryRun") {
+				return cutDryRun(adjustedTimes, base, postfix, ext, startIndex, picks)
+			}
+
+			return cutSchedule(adjustedTimes, base, postfix, ext, startIndex, picks, c.Bool("verbose"))
 		},
 	}
 
@@ -99,6 +102,25 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func getPicks(arg string) (map[int]struct{}, error) {
+	if len(arg) == 0 {
+		return nil, nil
+	}
+
+	args := strings.Split(arg, ",")
+	picks := make(map[int]struct{}, len(args))
+	for _, a := range args {
+		i, err := strconv.Atoi(a)
+		if err != nil {
+			return nil, err
+		}
+
+		picks[i-1] = struct{}{}
+	}
+
+	return picks, nil
 }
 
 func getFilenameParts(args []string) (string, string, string, error) {
@@ -423,13 +445,14 @@ func adjustTimes(in []decTimePair, b, a, c float64) ([]decTimePair, error) {
 	return out, nil
 }
 
-func cutDryRun(timePairs []decTimePair, base, postfix, ext string, startIndex int, only int) error {
+func cutDryRun(timePairs []decTimePair, base, postfix, ext string, startIndex int, parts map[int]struct{}) error {
 	in := base + ext
 
 	for i, tp := range timePairs {
-		if only > 0 && i+1 != only {
+		if _, ok := parts[i]; !ok && len(parts) > 0 {
 			continue
 		}
+
 		command := constructCommand(tp, in, base, postfix, ext, i+startIndex, true)
 
 		fmt.Println(command)
@@ -438,11 +461,11 @@ func cutDryRun(timePairs []decTimePair, base, postfix, ext string, startIndex in
 	return nil
 }
 
-func cutSchedule(timePairs []decTimePair, base, postfix, ext string, startIndex int, only int, verbose bool) error {
+func cutSchedule(timePairs []decTimePair, base, postfix, ext string, startIndex int, parts map[int]struct{}, verbose bool) error {
 	in := base + ext
 
 	for i, tp := range timePairs {
-		if only > 0 && i+1 != only {
+		if _, ok := parts[i]; !ok && len(parts) > 0 {
 			continue
 		}
 
