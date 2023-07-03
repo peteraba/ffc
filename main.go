@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/bitfield/script"
+	"github.com/pkg/errors"
 	"github.com/shopspring/decimal"
 	"github.com/urfave/cli/v2"
 )
@@ -63,6 +64,12 @@ func main() {
 				Value:   "",
 				Usage:   "comma separated list of part numbers to keep from args",
 			},
+			&cli.BoolFlag{
+				Name:    "safe-index",
+				Aliases: []string{"si"},
+				Value:   false,
+				Usage:   "",
+			},
 		},
 		Action: func(c *cli.Context) error {
 			args := c.Args().Slice()
@@ -82,6 +89,18 @@ func main() {
 			adjustedTimes, err := adjustTimes(parsedTimes, c.Float64("before-context"), c.Float64("after-context"), c.Float64("context"))
 			if err != nil {
 				return err
+			}
+
+			if c.Bool("safe-index") {
+				keyFrames, err := getKeyFrames(base, ext)
+				if err != nil {
+					return errors.Wrap(err, "error getting key frames")
+				}
+
+				adjustedTimes, err = readjustTimes(parsedTimes, keyFrames)
+				if err != nil {
+					return errors.Wrap(err, "error readjusting times")
+				}
 			}
 
 			startIndex := 1
@@ -216,6 +235,14 @@ type decTime struct {
 	decimal.Decimal
 }
 
+func newDecTimeFromInt64(i int64) decTime {
+	return decTime{Decimal: decimal.NewFromInt(i)}
+}
+
+func newDecTimeFromDec(d decimal.Decimal) decTime {
+	return decTime{Decimal: d}
+}
+
 func (dt decTime) String() string {
 	base60 := intToTimeString(dt.IntPart())
 
@@ -280,6 +307,10 @@ func (dtp decTimePair) From() string {
 
 func (dtp decTimePair) To() string {
 	return dtp[1].Decimal.Sub(dtp[0].Decimal).String()
+}
+
+func (dtp decTimePair) ToInt() int64 {
+	return dtp[1].Decimal.Sub(dtp[0].Decimal).IntPart()
 }
 
 func parseTimes(timePairs []stringPair, parseAsSeconds bool) ([]decTimePair, error) {
@@ -415,6 +446,65 @@ func numSplit(in string) (string, int32, error) {
 
 const alpha = 0.0001
 
+func getKeyFrames(base, ext string) ([]int64, error) {
+	fileName := fmt.Sprintf("%s%s", base, ext)
+
+	// cmd := fmt.Sprintf(`ffprobe -read_intervals %q -loglevel quiet -select_streams v:0 -show_entries packet=pts_time,flags -of csv=print_section=0 %q`, strings.Join(parts, ","), fileName)
+	cmd := fmt.Sprintf(`ffprobe -loglevel quiet -select_streams v:0 -show_entries packet=pts_time,flags -of csv=print_section=0 %q`, fileName)
+	log.Println(cmd)
+
+	out, err := script.Exec(cmd).Match(",K__").String()
+	if err != nil {
+		log.Println(errors.Wrap(err, "ffprobe failed"))
+		return nil, err
+	}
+
+	lines := strings.Split(out, "\n")
+
+	m := make(map[int64]struct{}, len(lines))
+	values := make([]int64, 0, len(lines))
+	for _, line := range lines {
+		if len(line) < 4 {
+			continue
+		}
+
+		value, err := decimal.NewFromString(line[:len(line)-4])
+		if err != nil {
+			return nil, errors.Wrap(err, "invalid string to be parsed as decimal")
+		}
+
+		n := value.IntPart()
+		if _, ok := m[n]; ok {
+			continue
+		}
+
+		m[n] = struct{}{}
+		values = append(values, n)
+	}
+
+	return values, nil
+}
+
+func readjustTimes(in []decTimePair, keyFrames []int64) ([]decTimePair, error) {
+	result := make([]decTimePair, 0, len(in))
+
+	keyFrame := int64(0)
+	for _, dtp := range in {
+		needle := dtp[0].IntPart()
+
+		for _, check := range keyFrames {
+			if check > needle {
+				break
+			}
+			keyFrame = check
+		}
+
+		result = append(result, decTimePair{newDecTimeFromInt64(keyFrame), dtp[1]})
+	}
+
+	return result, nil
+}
+
 func adjustTimes(in []decTimePair, b, a, c float64) ([]decTimePair, error) {
 	if len(in) == 0 || a < alpha && b < alpha && c < alpha {
 		return in, nil
@@ -490,7 +580,7 @@ func cutSchedule(timePairs []decTimePair, base, postfix, ext string, startIndex 
 func constructCommand(tp decTimePair, in, base, postfix, ext string, i int, verbose bool) string {
 	out := constructName(base, postfix, ext, i, verbose)
 
-	return fmt.Sprintf(`ffmpeg -ss %s -i "%s" -c copy -t %s "%s"`, tp.From(), in, tp.To(), out)
+	return fmt.Sprintf(`ffmpeg -ss %s -i %q -c copy -t %s %q`, tp.From(), in, tp.To(), out)
 }
 
 func constructName(base, postfix, ext string, i int, verbose bool) string {
